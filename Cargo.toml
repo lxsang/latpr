@@ -1,0 +1,30 @@
+[package]
+name = "latpr"
+version = "0.1.0"
+edition = "2021"
+authors = ["Dany LE"]
+description = "Backend library for antd tunnel API"
+repository = "https://github.com/lxsang/latpr.git"
+license = "MIT"
+readme = "README.md"
+keywords = ["Antd", "Tunnel", "API"]
+categories = ["backend", "server"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[[bin]]
+name = "pecho"
+path = "src/pecho.rs"
+
+[dependencies]
+libc = "0.2"
+
+[profile.dev]
+opt-level = 0
+
+[profile.release]
+opt-level = 3
+# 's' for size
+lto = true
+panic = 'abort'
+codegen-units = 1
