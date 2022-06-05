@@ -18,6 +18,7 @@ path = "src/pecho.rs"
 
 [dependencies]
 libc = "0.2"
+mio = { version = "0.8", features = ["os-poll", "net", "os-ext"] }
 
 [profile.dev]
 opt-level = 0

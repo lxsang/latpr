@@ -9,11 +9,11 @@ use std::fmt::Arguments;
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::BufReader;
-use std::io::{Error, ErrorKind};
 use std::mem;
 use std::os::unix::io::RawFd;
 use std::path::Path;
 use std::ptr;
+use std::error::Error;
 
 /// app version
 pub const API_VERSION: &str = "0.1.0";
@@ -26,9 +26,11 @@ const DAEMON_NAME: &str = "antd-tunnel";
 #[macro_export]
 macro_rules! ERR {
     ($x:expr) => {
-        Error::new(
-            ErrorKind::Other,
-            format!("({}:{}): {}", file!(), line!(), $x),
+        Box::new(
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("({}:{}): {}", file!(), line!(), $x),
+            )
         )
     };
 }
@@ -38,8 +40,11 @@ macro_rules! ERR {
 #[macro_export]
 macro_rules! INFO {
     ($($args:tt)*) => ({
-        let prefix = format!(":info@[{}:{}]: ",file!(), line!());
-        let _ = LOG::log(&prefix[..], &LogLevel::INFO, format_args!($($args)*));
+        if std::env::var("debug").is_ok()
+        {
+            let prefix = format!(":info@[{}:{}]: ",file!(), line!());
+            let _ = LOG::log(&prefix[..], &LogLevel::INFO, format_args!($($args)*));
+        }
     })
 }
 
@@ -69,8 +74,7 @@ macro_rules! ERROR {
 #[macro_export]
 macro_rules! EXIT {
     ($($args:tt)*) => ({
-        let prefix = format!(":error@[{}:{}]: ",file!(), line!());
-        let _ = LOG::log(&prefix[..], &LogLevel::ERROR, format_args!($($args)*));
+        ERROR!($($args)*);
         panic!("{}",  format_args!($($args)*));
     })
 }
@@ -121,8 +125,8 @@ impl LOG {
     ///
     /// # Errors
     ///
-    /// * `std error` - All errors related to formated and C string manipulation
-    pub fn log(prefix: &str, level: &LogLevel, args: Arguments<'_>) -> Result<(), Error> {
+    /// * `error` - All errors related to formated and C string manipulation
+    pub fn log(prefix: &str, level: &LogLevel, args: Arguments<'_>) -> Result<(), Box<dyn Error>> {
         use std::fmt::Write;
         let mut output = String::new();
         if output.write_fmt(args).is_err() {
@@ -180,7 +184,7 @@ pub fn on_exit(f: fn(n: i32) -> ()) {
 /// # Errors
 ///
 /// * `std error` - All error related to lib ffi calls
-pub fn get_username() -> Result<String, Error> {
+pub fn get_username() -> Result<String, Box<dyn Error>> {
     let mut passwd_ptr = unsafe { mem::zeroed::<libc::passwd>() };
     let mut buf = vec![0; 1024];
     let mut result = ptr::null_mut::<libc::passwd>();
@@ -236,7 +240,7 @@ pub fn get_username() -> Result<String, Error> {
 /// * `getpwnam` - Error when calling the libc `getpwnam` function
 /// * `setuid` - Error when calling the libc `setuid` function
 /// * `CString from String` - Error creating `CString` from Rust `String`
-pub fn privdrop(optuser: Option<&String>, optgroup: Option<&String>) -> Result<(), Error> {
+pub fn privdrop(optuser: Option<&String>, optgroup: Option<&String>) -> Result<(), Box<dyn Error>> {
     if optuser.is_none() && optgroup.is_none() {
         return Err(ERR!("No user or group found!"));
     }
@@ -251,14 +255,14 @@ pub fn privdrop(optuser: Option<&String>, optgroup: Option<&String>) -> Result<(
                 return Err(ERR!(format!(
                     "privdrop: Unable to getgrnam of group `{}`: {}",
                     group,
-                    Error::last_os_error()
+                    std::io::Error::last_os_error()
                 )));
             }
             if unsafe { libc::setgid((*p).gr_gid) } != 0 {
                 return Err(ERR!(format!(
                     "privdrop: Unable to setgid of group `{}`: {}",
                     group,
-                    Error::last_os_error()
+                    std::io::Error::last_os_error()
                 )));
             }
         } else {
@@ -274,14 +278,14 @@ pub fn privdrop(optuser: Option<&String>, optgroup: Option<&String>) -> Result<(
                 return Err(ERR!(format!(
                     "privdrop: Unable to getpwnam of user `{}`: {}",
                     user,
-                    Error::last_os_error()
+                    std::io::Error::last_os_error()
                 )));
             }
             if unsafe { libc::setuid((*p).pw_uid) } != 0 {
                 return Err(ERR!(format!(
                     "privdrop: Unable to setuid of user ``{}`: {}",
                     user,
-                    Error::last_os_error()
+                    std::io::Error::last_os_error()
                 )));
             }
         } else {
@@ -307,7 +311,7 @@ pub fn privdrop(optuser: Option<&String>, optgroup: Option<&String>) -> Result<(
 /// # Errors
 ///
 /// * `read_config` - Unable to read config file
-pub fn read_config(file: &str) -> Result<HashMap<String, String>, Error> {
+pub fn read_config(file: &str) -> Result<HashMap<String, String>, Box<dyn Error>> {
     if let Ok(f) = File::open(file) {
         let mut map = HashMap::new();
         let buf = BufReader::new(f);
@@ -405,7 +409,7 @@ pub fn error_string(error: Box<dyn std::any::Any + Send>) -> String {
 /// # Errors
 ///
 /// * `std io error` - conversion error
-pub fn string_from_u8(data: &[u8]) -> Result<String, Error> {
+pub fn string_from_u8(data: &[u8]) -> Result<String, Box<dyn Error>> {
     match std::str::from_utf8(data) {
         Ok(s) => Ok(String::from(s)),
         Err(error) => Err(ERR!(format!(
