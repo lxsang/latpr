@@ -2,18 +2,18 @@
 //!
 //! **Author**: "Dany LE"
 //!
-use std::env;
-use std::panic;
+use latpr::tunnel::{CallbackEvent, IOInterest, Msg, MsgKind, Topic};
 use latpr::utils::*;
-use latpr::tunnel::{Topic,Msg,MsgKind, CallbackEvent, IOInterest};
 use latpr::utils::{LogLevel, LOG};
-use latpr::{ERROR, INFO, WARN, EXIT};
+use latpr::{ERROR, EXIT, INFO, WARN};
 use std::collections::HashMap;
-use std::vec::Vec;
-use std::os::unix::net::UnixDatagram;
-use std::os::unix::io::AsRawFd;
+use std::env;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
+use std::os::unix::io::AsRawFd;
+use std::os::unix::net::UnixDatagram;
+use std::panic;
+use std::vec::Vec;
 
 /// Callback: clean up function
 ///
@@ -43,60 +43,62 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // - the program
     // - the socket file
     // - the topic name
-    if args.len() != 4
-    {
-        EXIT!("Invalid arguments: {}",  format!("{:?}", args));
+    if args.len() != 4 {
+        EXIT!("Invalid arguments: {}", format!("{:?}", args));
     }
     let _ = fs::remove_file(&args[3]);
     let socket = UnixDatagram::bind(&args[3])?;
     fs::set_permissions(&args[3], fs::Permissions::from_mode(0o777))?;
-    let mut clients = HashMap::<u16,u16>::new();
+    let mut clients = HashMap::<u16, u16>::new();
     let mut msg_handle = |evt: &CallbackEvent| {
-        if let Some(msg) = evt.msg
-        {
+        if let Some(msg) = evt.msg {
             match msg.kind {
                 MsgKind::ChannelSubscribe => {
                     INFO!("Client {} subscribe to channel {}", msg.client_id, &args[2]);
                     let _ = clients.insert(msg.client_id, msg.client_id);
-                },
+                }
                 MsgKind::ChannelUnsubscribe => {
-                    INFO!("Client {} unsubscribe to channel {}", msg.client_id, &args[2]);
-                    if let None = clients.remove(&msg.client_id)
-                    {
+                    INFO!(
+                        "Client {} unsubscribe to channel {}",
+                        msg.client_id,
+                        &args[2]
+                    );
+                    if let None = clients.remove(&msg.client_id) {
                         WARN!("Client {} is not in the client list", msg.client_id);
                     }
-                },
+                }
                 MsgKind::ChannelUnsubscribeAll => {
                     let mut list = Vec::<Msg>::new();
                     for (key, _) in clients.iter() {
-                        let msg = Msg::create(MsgKind::ChannelUnsubscribe,0,*key,Vec::new());
+                        let msg = Msg::create(MsgKind::ChannelUnsubscribe, 0, *key, Vec::new());
                         list.push(msg);
                     }
                     clients = HashMap::new();
                     return Some(list);
-                },
+                }
                 _ => {
-                    WARN!("Recive mesage kind {} from client {}", msg.kind,msg.client_id);
+                    WARN!(
+                        "Recive mesage kind {} from client {}",
+                        msg.kind,
+                        msg.client_id
+                    );
                 }
             };
         }
-        let event = match evt.event
-        {
+        let event = match evt.event {
             None => return None,
-            Some(e) => e
+            Some(e) => e,
         };
-        let _ = match evt.fd
-        {
+        let _ = match evt.fd {
             None => return None,
-            Some(d) => d
+            Some(d) => d,
         };
-        if event.is_readable()
-        {
+        if event.is_readable() {
             let mut buf = [0; 2048];
             let (count, _) = socket.recv_from(&mut buf).ok()?;
             let mut list = Vec::<Msg>::new();
             for (key, _) in clients.iter() {
-                let msg = Msg::create(MsgKind::ChannelData,0,*key,(&buf[0..count]).to_vec());
+                let msg = Msg::create(MsgKind::ChannelData, 0, *key, (&buf[0..count]).to_vec());
                 list.push(msg);
             }
             return Some(list);
@@ -109,10 +111,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         topic.on_message(&mut msg_handle);
         topic.register_io(socket.as_raw_fd(), IOInterest::READABLE)?;
         topic.open()?;
-        while running
-        {
-            if let Err(error) = topic.step()
-            {
+        while running {
+            if let Err(error) = topic.step() {
                 ERROR!("Error step: {}", error);
                 running = false;
             }

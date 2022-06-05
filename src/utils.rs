@@ -4,6 +4,7 @@
 //!
 use libc;
 use std::collections::HashMap;
+use std::error::Error;
 use std::ffi::{CStr, CString};
 use std::fmt::Arguments;
 use std::fs::File;
@@ -13,7 +14,6 @@ use std::mem;
 use std::os::unix::io::RawFd;
 use std::path::Path;
 use std::ptr;
-use std::error::Error;
 
 /// app version
 pub const API_VERSION: &str = "0.1.0";
@@ -26,12 +26,10 @@ const DAEMON_NAME: &str = "antd-tunnel";
 #[macro_export]
 macro_rules! ERR {
     ($x:expr) => {
-        Box::new(
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("({}:{}): {}", file!(), line!(), $x),
-            )
-        )
+        Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("({}:{}): {}", file!(), line!(), $x),
+        ))
     };
 }
 
@@ -67,7 +65,6 @@ macro_rules! ERROR {
         let _ = LOG::log(&prefix[..], &LogLevel::ERROR, format_args!($($args)*));
     })
 }
-
 
 /// Log and quit
 ///
