@@ -295,6 +295,14 @@ impl<'a> Topic<'a> {
         self.n_token = self.n_token + 1;
         Ok(())
     }
+    pub fn unregister_io(&mut self, fd: RawFd) -> Result<(), Box<dyn Error>> {
+        self.get_poll()?
+            .registry()
+            .deregister(&mut SourceFd(&fd))?;
+        // remove by value
+        self.io_fds.retain(|_, v| *v == fd);
+        Ok(())
+    }
 
     pub fn set_step_to(&mut self, to: Duration) {
         self.stepto = Some(to);
