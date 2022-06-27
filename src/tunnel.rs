@@ -56,7 +56,7 @@ pub struct Topic<'a> {
     pub socket_file: &'a str,
     channel: Option<UnixStream>,
     poll: Option<Poll>,
-    msg_handle: Option<&'a mut dyn FnMut(&CallbackEvent) -> Option<Vec<Msg>>>,
+    msg_handle: Option<&'a mut dyn FnMut(&CallbackEvent, &mut Topic<'a>) -> Result<(), Box<dyn Error>>>,
     io_fds: HashMap<Token, RawFd>,
     stepto: Option<Duration>,
     n_token: usize,
@@ -244,7 +244,7 @@ impl<'a> Topic<'a> {
     /// Arguments
     ///
     /// * `msg` - a message
-    fn write(&self, msg: &Msg) -> Result<(), Box<dyn Error>> {
+    pub fn write(&self, msg: &Msg) -> Result<(), Box<dyn Error>> {
         let mut sock = self.channel.as_ref().ok_or("Invalid write channel")?;
         // write the magic begin
         sock.write_all(&MSG_MAGIC_BEGIN.to_be_bytes())?;
@@ -274,7 +274,7 @@ impl<'a> Topic<'a> {
         Ok(())
     }
 
-    pub fn on_message(&mut self, callback: &'a mut impl FnMut(&CallbackEvent) -> Option<Vec<Msg>>) {
+    pub fn on_message(&mut self, callback: &'a mut impl FnMut(&CallbackEvent, &mut Topic<'a>) -> Result<(), Box<dyn Error>>) {
         self.msg_handle = Some(callback);
     }
 
@@ -302,15 +302,11 @@ impl<'a> Topic<'a> {
 
     fn execute_event(&mut self, evt: &CallbackEvent) -> Result<(), Box<dyn Error>>
     {
-        let mut response = None;
-        if let Some(callback) = self.msg_handle.as_mut() {
-                response = callback(evt);
+        let mut handle = self.msg_handle.take();
+        if let Some(ref mut callback) = handle{
+            callback(evt,self)?;
         }
-        if let Some(msgs) = response {
-            for msg in msgs.into_iter() {
-                self.write(&msg)?;
-            }
-        }
+        self.msg_handle = handle;
         Ok(())
     }
 
@@ -355,17 +351,11 @@ impl<'a> Topic<'a> {
 impl<'a> Drop for Topic<'a> {
     fn drop(&mut self) {
         INFO!("Closing topic: {}", self.name);
-        if let Some(callback) = self.msg_handle.as_mut() {
-            let rq = Msg::create(MsgKind::ChannelUnsubscribeAll, 0, 0, Vec::new());
-            let evt = CallbackEvent::create(None, None, Some(&rq));
-            if let Some(msgs) = callback(&evt) {
-                for msg in msgs.into_iter() {
-                    INFO!("Write message to client ID {}", msg.client_id);
-                    if let Err(error) = self.write(&msg) {
-                        ERROR!("unable to send message to topic [{}]: {}", self.name, error);
-                    }
-                }
-            }
+        let rq = Msg::create(MsgKind::ChannelUnsubscribeAll, 0, 0, Vec::new());
+        let evt = CallbackEvent::create(None, None, Some(&rq));
+        if let Err(error) = self.execute_event(&evt)
+        {
+            ERROR!("unable to properly drop topic [{}]: {}", self.name, error);
         }
         if let Err(error) = self.close() {
             ERROR!("Unable to close topic [{}]: {}", self.name, error);

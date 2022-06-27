@@ -50,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let socket = UnixDatagram::bind(&args[3])?;
     fs::set_permissions(&args[3], fs::Permissions::from_mode(0o777))?;
     let mut clients = HashMap::<u16, u16>::new();
-    let mut msg_handle = |evt: &CallbackEvent| {
+    let mut msg_handle = |evt: &CallbackEvent, topic: &mut Topic| {
         if let Some(msg) = evt.msg {
             match msg.kind {
                 MsgKind::ChannelSubscribe => {
@@ -68,13 +68,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 MsgKind::ChannelUnsubscribeAll => {
-                    let mut list = Vec::<Msg>::new();
                     for (key, _) in clients.iter() {
                         let msg = Msg::create(MsgKind::ChannelUnsubscribe, 0, *key, Vec::new());
-                        list.push(msg);
+                        topic.write(&msg)?;
                     }
-                    clients = HashMap::new();
-                    return Some(list);
                 }
                 _ => {
                     WARN!(
@@ -86,24 +83,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
         }
         let event = match evt.event {
-            None => return None,
+            None => return Ok(()),
             Some(e) => e,
         };
         let _ = match evt.fd {
-            None => return None,
+            None => return Ok(()),
             Some(d) => d,
         };
         if event.is_readable() {
             let mut buf = [0; 2048];
-            let (count, _) = socket.recv_from(&mut buf).ok()?;
-            let mut list = Vec::<Msg>::new();
+            let (count, _) = socket.recv_from(&mut buf)?;
             for (key, _) in clients.iter() {
                 let msg = Msg::create(MsgKind::ChannelData, 0, *key, (&buf[0..count]).to_vec());
-                list.push(msg);
+                topic.write(&msg)?;
             }
-            return Some(list);
         }
-        None
+        Ok(())
     };
     {
         let mut topic = Topic::create(&args[2], &args[1]);
