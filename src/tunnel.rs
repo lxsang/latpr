@@ -15,6 +15,7 @@ use std::vec::Vec;
 const MSG_MAGIC_BEGIN: u16 = 0x414e;
 const MSG_MAGIC_END: u16 = 0x5444;
 const SERVER: Token = Token(0);
+const MAX_EVT_CAPACITY: usize = 128;
 
 pub type IOInterest = Interest;
 pub type IOEvent = Event;
@@ -45,7 +46,7 @@ pub enum MsgKind {
 }
 
 pub struct CallbackEvent<'c> {
-    pub fd: Option<&'c RawFd>,
+    pub fd: Option<RawFd>,
     pub event: Option<&'c IOEvent>,
     pub msg: Option<&'c Msg>,
 }
@@ -70,7 +71,7 @@ pub struct Msg {
 }
 
 impl<'b> CallbackEvent<'b> {
-    pub fn create(fd: Option<&'b RawFd>, event: Option<&'b IOEvent>, msg: Option<&'b Msg>) -> Self {
+    pub fn create(fd: Option<RawFd>, event: Option<&'b IOEvent>, msg: Option<&'b Msg>) -> Self {
         CallbackEvent { fd, event, msg }
     }
 }
@@ -299,36 +300,51 @@ impl<'a> Topic<'a> {
         self.stepto = Some(to);
     }
 
+    fn execute_event(&mut self, evt: &CallbackEvent) -> Result<(), Box<dyn Error>>
+    {
+        let mut response = None;
+        if let Some(callback) = self.msg_handle.as_mut() {
+                response = callback(evt);
+        }
+        if let Some(msgs) = response {
+            for msg in msgs.into_iter() {
+                self.write(&msg)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn step(&mut self) -> Result<(), Box<dyn Error>> {
         // Poll Mio for events, blocking or timeout
-        let mut events = Events::with_capacity(128);
+        let mut events = Events::with_capacity(MAX_EVT_CAPACITY);
         let timeout = self.stepto;
         self.get_poll()?.poll(&mut events, timeout)?;
         // Process each event.
-        for event in events.iter() {
-            // We can use the token we previously provided to `register` to
-            // determine for which socket the event is.
-            let mut evt = CallbackEvent::create(None, Some(event), None);
-            let mut response = None;
+        if events.is_empty()
+        {
+            let evt = CallbackEvent::create(None, None, None);
+            self.execute_event(&evt)?;
+        }
+        else
+        {
+            for event in events.iter() {
+                // We can use the token we previously provided to `register` to
+                // determine for which socket the event is.
+                let mut evt = CallbackEvent::create(None, Some(event), None);
 
-            match event.token() {
-                SERVER => {
-                    let data = self.read()?;
-                    evt.msg = Some(&data);
-                    if let Some(callback) = self.msg_handle.as_mut() {
-                        response = callback(&evt);
+                match event.token() {
+                    SERVER => {
+                        let data = self.read()?;
+                        evt.msg = Some(&data);
+                        self.execute_event(&evt)?;       
                     }
-                }
-                token => {
-                    evt.fd = self.io_fds.get(&token);
-                    if let Some(callback) = self.msg_handle.as_mut() {
-                        response = callback(&evt);
+                    token => {
+                        if let Some(fd) = self.io_fds.get(&token)
+                        {
+                            evt.fd = Some(*fd);
+                        }
+                        self.execute_event(&evt)?;
                     }
-                }
-            }
-            if let Some(msgs) = response {
-                for msg in msgs.into_iter() {
-                    self.write(&msg)?;
                 }
             }
         }
