@@ -300,7 +300,7 @@ impl<'a> Topic<'a> {
             .registry()
             .deregister(&mut SourceFd(&fd))?;
         // remove by value
-        self.io_fds.retain(|_, v| *v == fd);
+        self.io_fds.retain(|_, v| *v != fd);
         Ok(())
     }
 
